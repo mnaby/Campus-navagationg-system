@@ -1,1 +1,280 @@
+#include <iostream>
+#include <cstring>
+using namespace std;
 
+const int MAX_LOC = 30;   // 最大地点数
+const int MAX_CAT = 10;   // 最大分类数
+const int NAME_LEN = 20;  // 名称最大长度
+const int MAX_HISTORY = 30; // 最大浏览历史记录数
+const int MAX_RECENT = 5;   // 最近访问地点数
+
+// 分类结构体（线性表元素）
+struct Category {
+    int id;
+    char name[NAME_LEN];
+};
+
+// 地点结构体（线性表元素）
+struct Location {
+    int id;
+    char name[NAME_LEN];
+    int category_id;  // 所属分类ID
+};
+
+// 地点线性表（顺序表）
+struct LocationList {
+    Location data[MAX_LOC];
+    int length;
+};
+
+// 分类线性表（顺序表）
+struct CategoryList {
+    Category data[MAX_CAT];
+    int length;
+};
+
+// 浏览历史栈（用于后退功能）
+struct HistoryStack {
+    Location data[MAX_HISTORY];
+    int top; // 栈顶指针，-1表示空栈
+};
+
+// 最近访问队列（固定长度5）
+struct RecentQueue {
+    Location data[MAX_RECENT];
+    int front; // 队头
+    int rear;  // 队尾
+    int count; // 当前元素个数
+};
+
+// 初始化地点线性表
+void initLocList(LocationList &list) {
+    list.length = 0;
+}
+
+// 初始化分类线性表
+void initCatList(CategoryList &list) {
+    list.length = 0;
+}
+
+// 初始化浏览历史栈
+void initHistoryStack(HistoryStack &stack) {
+    stack.top = -1;
+}
+
+// 初始化最近访问队列
+void initRecentQueue(RecentQueue &queue) {
+    queue.front = 0;
+    queue.rear = -1;
+    queue.count = 0;
+}
+
+// 添加地点
+bool addLocation(LocationList &list, int id, const char* name, int catId) {
+    if (list.length >= MAX_LOC) return false;
+    list.data[list.length].id = id;
+    strcpy(list.data[list.length].name, name);
+    list.data[list.length].category_id = catId;
+    list.length++;
+    return true;
+}
+
+// 添加分类
+bool addCategory(CategoryList &list, int id, const char* name) {
+    if (list.length >= MAX_CAT) return false;
+    list.data[list.length].id = id;
+    strcpy(list.data[list.length].name, name);
+    list.length++;
+    return true;
+}
+
+// 遍历打印所有地点
+void printAllLocations(const LocationList &list) {
+    cout << "=== 全部校园地点（共" << list.length << "个）===" << endl;
+    for (int i = 0; i < list.length; i++) {
+        cout << list.data[i].id << ". " << list.data[i].name << endl;
+    }
+}
+
+// 根据分类ID获取分类名称
+const char* getCategoryName(const CategoryList &catList, int catId) {
+    for (int i = 0; i < catList.length; i++) {
+        if (catList.data[i].id == catId) {
+            return catList.data[i].name;
+        }
+    }
+    return "未知分类";
+}
+
+// 按分类筛选地点
+void filterByCategory(const LocationList &locList, const CategoryList &catList, int catId) {
+    cout << "\n=== 分类【" << getCategoryName(catList, catId) << "】下的地点 ===" << endl;
+    bool found = false;
+    for (int i = 0; i < locList.length; i++) {
+        if (locList.data[i].category_id == catId) {
+            cout << "- " << locList.data[i].name << endl;
+            found = true;
+        }
+    }
+    if (!found) {
+        cout << "该分类下暂无地点。" << endl;
+    }
+}
+
+// 根据地点ID查找地点
+const Location* findLocationById(const LocationList &list, int id) {
+    for (int i = 0; i < list.length; i++) {
+        if (list.data[i].id == id) {
+            return &list.data[i];
+        }
+    }
+    return nullptr;
+}
+
+// ==================== 版本2新增：浏览历史功能 ====================
+
+// 压入浏览历史栈
+void pushHistory(HistoryStack &stack, const Location &loc) {
+    if (stack.top >= MAX_HISTORY - 1) {
+        cout << "⚠️ 浏览历史已满，无法记录新访问！" << endl;
+        return;
+    }
+    stack.top++;
+    stack.data[stack.top] = loc;
+}
+
+// 弹出浏览历史栈（后退功能）
+const Location* popHistory(HistoryStack &stack) {
+    if (stack.top == -1) {
+        cout << "⚠️ 浏览历史为空，无法后退！" << endl;
+        return nullptr;
+    }
+    const Location* loc = &stack.data[stack.top];
+    stack.top--;
+    return loc;
+}
+
+// 打印当前浏览历史栈（从新到旧）
+void printHistory(const HistoryStack &stack) {
+    cout << "\n=== 浏览历史记录（从新到旧）===" << endl;
+    if (stack.top == -1) {
+        cout << "暂无浏览记录。" << endl;
+        return;
+    }
+    for (int i = stack.top; i >= 0; i--) {
+        cout << stack.data[i].name << " → ";
+    }
+    cout << "开始" << endl;
+}
+
+// ==================== 版本2新增：最近访问功能 ====================
+
+// 添加到最近访问队列（自动淘汰最早记录）
+void addToRecent(RecentQueue &queue, const Location &loc) {
+    // 如果队列已满，先移除最早的元素（队头）
+    if (queue.count >= MAX_RECENT) {
+        queue.front = (queue.front + 1) % MAX_RECENT;
+        queue.count--;
+    }
+    queue.rear = (queue.rear + 1) % MAX_RECENT;
+    queue.data[queue.rear] = loc;
+    queue.count++;
+}
+
+// 打印最近访问列表
+void printRecent(const RecentQueue &queue) {
+    cout << "\n=== 最近访问的地点（最多" << MAX_RECENT << "个）===" << endl;
+    if (queue.count == 0) {
+        cout << "暂无最近访问记录。" << endl;
+        return;
+    }
+    int idx = queue.front;
+    for (int i = 0; i < queue.count; i++) {
+        cout << i+1 << ". " << queue.data[idx].name << endl;
+        idx = (idx + 1) % MAX_RECENT;
+    }
+}
+
+// 模拟访问一个地点（同时更新历史和最近访问）
+void visitLocation(HistoryStack &history, RecentQueue &recent, const LocationList &list, int locId) {
+    const Location* loc = findLocationById(list, locId);
+    if (!loc) {
+        cout << "⚠️ 未找到ID为" << locId << "的地点！" << endl;
+        return;
+    }
+    pushHistory(history, *loc);
+    addToRecent(recent, *loc);
+    cout << "✅ 已访问地点：" << loc->name << endl;
+}
+
+int main() {
+    LocationList locList;
+    CategoryList catList;
+    HistoryStack history;
+    RecentQueue recent;
+    
+    initLocList(locList);
+    initCatList(catList);
+    initHistoryStack(history);
+    initRecentQueue(recent);
+
+    // 添加预设分类
+    addCategory(catList, 1, "教学区");
+    addCategory(catList, 2, "生活区");
+    addCategory(catList, 3, "运动区");
+    addCategory(catList, 4, "校门区");
+
+    // 添加全部21个地点
+    // 教学区
+    addLocation(locList, 1, "弘义楼西", 1);
+    addLocation(locList, 2, "弘义楼", 1);
+    addLocation(locList, 3, "弘义楼东", 1);
+    addLocation(locList, 4, "明德楼", 1);
+    addLocation(locList, 5, "明德楼西", 1);
+    addLocation(locList, 6, "明德楼东", 1);
+    addLocation(locList, 7, "图书馆", 1);
+    addLocation(locList, 8, "致远楼", 1);
+    // 生活区
+    addLocation(locList, 9, "今日餐厅", 2);
+    addLocation(locList, 10, "1A楼", 2);
+    addLocation(locList, 11, "1B楼", 2);
+    addLocation(locList, 12, "2A楼", 2);
+    addLocation(locList, 13, "2B楼", 2);
+    addLocation(locList, 14, "3A楼", 2);
+    addLocation(locList, 15, "3B楼", 2);
+    // 运动区
+    addLocation(locList, 16, "体育场", 3);
+    addLocation(locList, 17, "球场", 3);
+    // 校门区
+    addLocation(locList, 18, "综合楼", 4);
+    addLocation(locList, 19, "北门", 4);
+    addLocation(locList, 20, "北二门", 4);
+
+    // 测试版本1功能
+    printAllLocations(locList);
+    filterByCategory(locList, catList, 1);  // 查看教学区
+    filterByCategory(locList, catList, 2);  // 查看生活区
+
+    // 测试版本2：模拟访问地点
+    cout << "\n--- 开始模拟访问地点 ---" << endl;
+    visitLocation(history, recent, locList, 7);   // 图书馆
+    visitLocation(history, recent, locList, 4);   // 明德楼
+    visitLocation(history, recent, locList, 2);   // 弘义楼
+    visitLocation(history, recent, locList, 9);   // 今日餐厅
+    visitLocation(history, recent, locList, 16);  // 体育场
+    visitLocation(history, recent, locList, 19);  // 北门（触发最近访问淘汰）
+
+    // 打印浏览历史和最近访问
+    printHistory(history);
+    printRecent(recent);
+
+    // 测试后退功能
+    cout << "\n--- 测试后退功能 ---" << endl;
+    const Location* backLoc = popHistory(history);
+    if (backLoc) cout << "🔙 后退到：" << backLoc->name << endl;
+    backLoc = popHistory(history);
+    if (backLoc) cout << "🔙 后退到：" << backLoc->name << endl;
+    printHistory(history);
+
+    return 0;
+}
