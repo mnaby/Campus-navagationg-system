@@ -254,23 +254,7 @@ void searchLocation(const LocationList &list, const char* keyword) {
     if (!found) cout << "无结果" << endl;
 }
 
-// ==================== V4 热度 & 距离排序 ====================
-bool cmpByHot(const Location &a, const Location &b) {
-    return a.hot > b.hot;
-}
-bool cmpByDist(const Location &a, const Location &b) {
-    return a.dist < b.dist;
-}
-void sortByHot(LocationList &list) {
-    sort(list.data, list.data + list.length, cmpByHot);
-}
-void sortByDistance(LocationList &list) {
-    sort(list.data, list.data + list.length, cmpByDist);
-}
-void setDistance(LocationList &list, int locId, int dist) {
-    Location* p = (Location*)findLocationById(list, locId);
-    if (p) p->dist = dist;
-}
+
 
 // ==================== 主函数 ====================
 int main() {
