@@ -1,6 +1,7 @@
 #include <iostream>
 #include <cstring>
 #include <algorithm>
+#include <ctime> // 用于计时，对比效率
 using namespace std;
 
 const int MAX_LOC = 30;
@@ -129,6 +130,80 @@ void dijkstra(const CampusGraph &g, const LocationList &list, int startId, int e
     cout << endl;
 }
 
+// ==================== V3 新增：BF 和 KMP 字符串匹配 ====================
+// BF算法（暴力匹配）
+int BF(const char* text, const char* pattern) {
+    int n = strlen(text);
+    int m = strlen(pattern);
+    int i = 0, j = 0;
+    while (i < n && j < m) {
+        if (text[i] == pattern[j]) {
+            i++;
+            j++;
+        } else {
+            i = i - j + 1;
+            j = 0;
+        }
+    }
+    if (j == m) return i - j; // 匹配成功，返回起始下标
+    return -1; // 匹配失败
+}
+
+// KMP算法：构建next数组
+void buildNext(const char* pattern, int* next) {
+    int m = strlen(pattern);
+    next[0] = -1;
+    int j = 0, t = -1;
+    while (j < m - 1) {
+        if (t == -1 || pattern[j] == pattern[t]) {
+            j++;
+            t++;
+            next[j] = t;
+        } else {
+            t = next[t];
+        }
+    }
+}
+
+// KMP匹配主函数
+int KMP(const char* text, const char* pattern) {
+    int n = strlen(text);
+    int m = strlen(pattern);
+    if (m == 0) return 0;
+    int* next = new int[m];
+    buildNext(pattern, next);
+    int i = 0, j = 0;
+    while (i < n && j < m) {
+        if (j == -1 || text[i] == pattern[j]) {
+            i++;
+            j++;
+        } else {
+            j = next[j];
+        }
+    }
+    delete[] next;
+    if (j == m) return i - j;
+    return -1;
+}
+
+// 带算法选择的搜索函数，并计时对比效率
+void searchLocationWithAlgo(const LocationList &list, const char* keyword, int algoType) {
+    cout << "\n=== 搜索：" << keyword << "（" << (algoType == 0 ? "BF算法" : "KMP算法") << "）===" << endl;
+    bool found = false;
+    clock_t start = clock();
+    for (int i = 0; i < list.length; i++) {
+        int pos = (algoType == 0) ? BF(list.data[i].name, keyword) : KMP(list.data[i].name, keyword);
+        if (pos != -1) {
+            cout << "- " << list.data[i].name << endl;
+            found = true;
+        }
+    }
+    clock_t end = clock();
+    double timeCost = (double)(end - start) / CLOCKS_PER_SEC * 1000; // 毫秒
+    cout << "搜索耗时：" << timeCost << " ms" << endl;
+    if (!found) cout << "无结果" << endl;
+}
+
 // ==================== 基础函数 ====================
 void initLocList(LocationList &list) { list.length = 0; }
 void initCatList(CategoryList &list) { list.length = 0; }
@@ -241,19 +316,6 @@ void visitLocation(HistoryStack &h, RecentQueue &r, LocationList &list, int locI
     cout << "访问：" << loc->name << "  热度:" << loc->hot << endl;
 }
 
-// ==================== V3 模糊搜索 ====================
-void searchLocation(const LocationList &list, const char* keyword) {
-    cout << "\n=== 搜索：" << keyword << " ===" << endl;
-    bool found = false;
-    for (int i = 0; i < list.length; i++) {
-        if (strstr(list.data[i].name, keyword)) {
-            cout << "- " << list.data[i].name << endl;
-            found = true;
-        }
-    }
-    if (!found) cout << "无结果" << endl;
-}
-
 // ==================== 菜单 ====================
 void showMenu() {
     cout << "\n========== 校园导航系统 ==========" << endl;
@@ -262,8 +324,9 @@ void showMenu() {
     cout << "3. 访问地点（记录历史）" << endl;
     cout << "4. 查看浏览历史" << endl;
     cout << "5. 查看最近访问" << endl;
-    cout << "6. 模糊搜索地点" << endl;
-    cout << "7. 查询最短路径" << endl;
+    cout << "6. 模糊搜索地点（BF算法）" << endl;
+    cout << "7. 模糊搜索地点（KMP算法）" << endl;
+    cout << "8. 查询最短路径" << endl;
     cout << "0. 退出系统" << endl;
     cout << "请输入操作编号：";
 }
@@ -352,10 +415,17 @@ int main() {
                 char key[NAME_LEN];
                 cout << "输入搜索关键词：";
                 cin >> key;
-                searchLocation(locList, key);
+                searchLocationWithAlgo(locList, key, 0); // BF
                 break;
             }
             case 7: {
+                char key[NAME_LEN];
+                cout << "输入搜索关键词：";
+                cin >> key;
+                searchLocationWithAlgo(locList, key, 1); // KMP
+                break;
+            }
+            case 8: {
                 int s, e;
                 cout << "输入起点ID："; cin >> s;
                 cout << "输入终点ID："; cin >> e;
