@@ -52,22 +52,6 @@ struct RecentQueue {
     int count;
 };
 
-// ==================== V5 新增：校园图（邻接矩阵） ====================
-struct CampusGraph {
-    int edge[MAX_LOC][MAX_LOC]; // 路径长度
-    int nodeNum;                // 地点数量
-};
-
-// 初始化图
-void initGraph(CampusGraph &g, int n) {
-    g.nodeNum = n;
-    for (int i = 1; i <= n; i++) {
-        for (int j = 1; j <= n; j++) {
-            g.edge[i][j] = (i == j) ? 0 : INF;
-        }
-    }
-}
-
 // 添加双向路径
 void addPath(CampusGraph &g, int a, int b, int len) {
     g.edge[a][b] = len;
