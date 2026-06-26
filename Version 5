@@ -1,507 +1,110 @@
-#include <iostream>
-#include <cstring>
-#include <algorithm>
-#include <ctime>
-using namespace std;
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <stdlib.h>
 
-const int MAX_LOC = 30;
-const int MAX_CAT = 10;
-const int NAME_LEN = 20;
-const int MAX_HISTORY = 30;
-const int MAX_RECENT = 5;
-const int INF = 0x3f3f3f3f;
+#define MAX_CATEGORY 20
+#define MAX_PLACE 50
+#define MAX_HISTORY 100
+#define MAX_RECENT 5
+#define INF 999999.0 // 不可达
 
-// 分类
-struct Category {
+typedef struct {
     int id;
-    char name[NAME_LEN];
-};
+    char name[50];
+} Category;
 
-// 地点
-struct Location {
+typedef struct {
     int id;
-    char name[NAME_LEN];
-    int category_id;
-    int hot;         // 访问热度
-    int dist;        // 距离参考点距离
-};
+    char name[50];
+    int categoryId;
+    double distance;
+    int hot;
+} Place;
 
-// 地点顺序表
-struct LocationList {
-    Location data[MAX_LOC];
-    int length;
-};
+// 图结构：邻接矩阵
+typedef struct {
+    int vertexNum;
+    double edges[MAX_PLACE][MAX_PLACE];
+} CampusGraph;
 
-// 分类顺序表
-struct CategoryList {
-    Category data[MAX_CAT];
-    int length;
-};
-
-// 浏览历史栈
-struct HistoryStack {
-    Location data[MAX_HISTORY];
+typedef struct {
+    int placeIds[MAX_HISTORY];
     int top;
-};
+} HistoryStack;
 
-// 最近访问队列
-struct RecentQueue {
-    Location data[MAX_RECENT];
+typedef struct {
+    int placeIds[MAX_RECENT];
     int front;
     int rear;
-    int count;
-};
+    int size;
+} RecentQueue;
 
-// ==================== V5新增：校园图（邻接矩阵） ====================
-struct CampusGraph {
-    int edge[MAX_LOC][MAX_LOC];  // 邻接矩阵存储边权
-    int nodeNum;                 // 节点总数
-};
+Category categories[MAX_CATEGORY];
+int catCount = 0;
+Place places[MAX_PLACE];
+int placeCount = 0;
+CampusGraph graph;
+HistoryStack historyStack;
+RecentQueue recentQueue;
+int currentPlaceId = -1;
+int pathCount = 0; // 路径计数
 
-// 函数前置声明（解决编译依赖问题）
-const Location* findLocationById(const LocationList &list, int id);
+void initStack() { historyStack.top = -1; }
+void pushStack(int placeId) {
+    if (historyStack.top < MAX_HISTORY - 1)
+        historyStack.placeIds[++historyStack.top] = placeId;
+}
+int popStack() {
+    if (historyStack.top == -1) return -1;
+    return historyStack.placeIds[historyStack.top--];
+}
 
-// 初始化图：自身距离为0，其余初始化为无穷大
-void initGraph(CampusGraph &g, int n) {
-    g.nodeNum = n;
-    for (int i = 1; i <= n; i++) {
-        for (int j = 1; j <= n; j++) {
-            g.edge[i][j] = (i == j) ? 0 : INF;
+void initQueue() {
+    recentQueue.front = 0;
+    recentQueue.rear = 0;
+    recentQueue.size = 0;
+}
+void enqueueRecent(int placeId) {
+    int exist = -1;
+    for (int i = 0; i < recentQueue.size; i++) {
+        int idx = (recentQueue.front + i) % MAX_RECENT;
+        if (recentQueue.placeIds[idx] == placeId) { exist = i; break; }
+    }
+    if (exist != -1) {
+        for (int i = exist; i < recentQueue.size - 1; i++) {
+            int idx = (recentQueue.front + i) % MAX_RECENT;
+            int nextIdx = (recentQueue.front + i + 1) % MAX_RECENT;
+            recentQueue.placeIds[idx] = recentQueue.placeIds[nextIdx];
         }
+        recentQueue.rear = (recentQueue.rear - 1 + MAX_RECENT) % MAX_RECENT;
+        recentQueue.size--;
     }
-}
-
-// 添加双向路径（无向带权图）
-void addPath(CampusGraph &g, int a, int b, int len) {
-    g.edge[a][b] = len;
-    g.edge[b][a] = len;
-}
-
-// Dijkstra 单源最短路径算法 + 路径回溯
-void dijkstra(const CampusGraph &g, const LocationList &list, int startId, int endId) {
-    // 合法性校验
-    const Location *startLoc = findLocationById(list, startId);
-    const Location *endLoc = findLocationById(list, endId);
-    if (!startLoc || !endLoc) {
-        cout << "\n错误：起点或终点ID不存在！" << endl;
-        return;
+    if (recentQueue.size == MAX_RECENT) {
+        recentQueue.front = (recentQueue.front + 1) % MAX_RECENT;
+        recentQueue.size--;
     }
-
-    int dist[MAX_LOC], vis[MAX_LOC] = {0};
-    int pre[MAX_LOC];  // 前驱数组，记录最短路径的上一个节点
-    // 初始化距离与前驱
-    for (int i = 1; i <= g.nodeNum; i++) {
-        dist[i] = g.edge[startId][i];
-        pre[i] = -1;
-        if (g.edge[startId][i] != INF && i != startId) {
-            pre[i] = startId;
-        }
-    }
-    dist[startId] = 0;
-    vis[startId] = 1;
-
-    // 贪心策略：n-1次松弛操作
-    for (int i = 2; i <= g.nodeNum; i++) {
-        // 选取未访问的距离最小节点
-        int minDist = INF, u = -1;
-        for (int j = 1; j <= g.nodeNum; j++) {
-            if (!vis[j] && dist[j] < minDist) {
-                minDist = dist[j];
-                u = j;
-            }
-        }
-        if (u == -1) break;  // 剩余节点均不可达
-        vis[u] = 1;
-
-        // 松弛相邻节点
-        for (int v = 1; v <= g.nodeNum; v++) {
-            if (!vis[v] && g.edge[u][v] != INF && dist[v] > dist[u] + g.edge[u][v]) {
-                dist[v] = dist[u] + g.edge[u][v];
-                pre[v] = u;
-            }
-        }
-    }
-
-    // 输出结果
-    cout << "\n===== 最短路径查询结果 =====" << endl;
-    cout << "起点：" << startLoc->name << "（ID:" << startId << "）" << endl;
-    cout << "终点：" << endLoc->name << "（ID:" << endId << "）" << endl;
-    
-    if (dist[endId] == INF) {
-        cout << "两点之间无可达路径" << endl;
-        return;
-    }
-    cout << "最短总距离：" << dist[endId] << " 米" << endl;
-
-    // 回溯完整路径
-    int path[MAX_LOC], cnt = 0;
-    for (int cur = endId; cur != -1; cur = pre[cur]) {
-        path[cnt++] = cur;
-    }
-
-    // 逆序输出路线
-    cout << "行走路线：";
-    for (int i = cnt - 1; i >= 0; i--) {
-        const Location *loc = findLocationById(list, path[i]);
-        cout << loc->name;
-        if (i > 0) cout << " → ";
-    }
-    cout << endl;
-}
-// ==================== V5新增模块结束 ====================
-
-// ==================== BF & KMP 字符串搜索 ====================
-int BF(const char* text, const char* pattern) {
-    int n = strlen(text);
-    int m = strlen(pattern);
-    int i = 0, j = 0;
-    while (i < n && j < m) {
-        if (text[i] == pattern[j]) {
-            i++;
-            j++;
-        } else {
-            i = i - j + 1;
-            j = 0;
-        }
-    }
-    return (j == m) ? i - j : -1;
+    recentQueue.placeIds[recentQueue.rear] = placeId;
+    recentQueue.rear = (recentQueue.rear + 1) % MAX_RECENT;
+    recentQueue.size++;
 }
 
-void buildNext(const char* pattern, int* next) {
-    int m = strlen(pattern);
-    next[0] = -1;
-    int j = 0, t = -1;
-    while (j < m - 1) {
-        if (t == -1 || pattern[j] == pattern[t]) {
-            j++;
-            t++;
-            next[j] = t;
-        } else {
-            t = next[t];
-        }
-    }
+char* getPlaceName(int placeId) {
+    for (int i = 0; i < placeCount; i++)
+        if (places[i].id == placeId) return places[i].name;
+    return "未知地点";
 }
 
-int KMP(const char* text, const char* pattern) {
-    int n = strlen(text);
-    int m = strlen(pattern);
-    if (m == 0) return 0;
-    int* next = new int[m];
-    buildNext(pattern, next);
-    int i = 0, j = 0;
-    while (i < n && j < m) {
-        if (j == -1 || text[i] == pattern[j]) {
-            i++;
-            j++;
-        } else {
-            j = next[j];
-        }
-    }
-    delete[] next;
-    return (j == m) ? i - j : -1;
+int getPlaceIndex(int placeId) {
+    for (int i = 0; i < placeCount; i++)
+        if (places[i].id == placeId) return i;
+    return -1;
 }
 
-void searchLocationWithAlgo(const LocationList &list, const char* keyword, int algoType) {
-    cout << "\n=== 搜索：" << keyword << "（" << (algoType == 0 ? "BF算法" : "KMP算法") << "）===" << endl;
-    bool found = false;
-    clock_t start = clock();
-    for (int i = 0; i < list.length; i++) {
-        int pos = (algoType == 0) ? BF(list.data[i].name, keyword) : KMP(list.data[i].name, keyword);
-        if (pos != -1) {
-            cout << "- " << list.data[i].name << endl;
-            found = true;
-        }
-    }
-    clock_t end = clock();
-    double timeCost = (double)(end - start) / CLOCKS_PER_SEC * 1000;
-    cout << "搜索耗时：" << timeCost << " ms" << endl;
-    if (!found) cout << "无匹配结果" << endl;
-}
-
-// ==================== 基础数据结构操作 ====================
-void initLocList(LocationList &list) {
-    list.length = 0;
-}
-void initCatList(CategoryList &list) {
-    list.length = 0;
-}
-void initHistoryStack(HistoryStack &stack) {
-    stack.top = -1;
-}
-void initRecentQueue(RecentQueue &queue) {
-    queue.front = 0;
-    queue.rear = -1;
-    queue.count = 0;
-}
-
-bool addLocation(LocationList &list, int id, const char* name, int catId) {
-    if (list.length >= MAX_LOC) return false;
-    list.data[list.length].id = id;
-    strcpy(list.data[list.length].name, name);
-    list.data[list.length].category_id = catId;
-    list.data[list.length].hot = 0;
-    list.data[list.length].dist = 0;
-    list.length++;
-    return true;
-}
-
-bool addCategory(CategoryList &list, int id, const char* name) {
-    if (list.length >= MAX_CAT) return false;
-    list.data[list.length].id = id;
-    strcpy(list.data[list.length].name, name);
-    list.length++;
-    return true;
-}
-
-const Location* findLocationById(const LocationList &list, int id) {
-    for (int i = 0; i < list.length; i++)
-        if (list.data[i].id == id)
-            return &list.data[i];
-    return nullptr;
-}
-
-const char* getCategoryName(const CategoryList &catList, int catId) {
-    for (int i = 0; i < catList.length; i++)
-        if (catList.data[i].id == catId)
-            return catList.data[i].name;
-    return "未知分类";
-}
-
-void printAllLocations(const LocationList &list) {
-    cout << "\n=== 全部地点（共" << list.length << "个）===" << endl;
-    for (int i = 0; i < list.length; i++) {
-        cout << list.data[i].id << ". " << list.data[i].name
-             << "  热度:" << list.data[i].hot
-             << "  距离:" << list.data[i].dist << endl;
-    }
-}
-
-void filterByCategory(const LocationList &locList, const CategoryList &catList, int catId) {
-    cout << "\n=== 分类【" << getCategoryName(catList, catId) << "】===" << endl;
-    bool found = false;
-    for (int i = 0; i < locList.length; i++) {
-        if (locList.data[i].category_id == catId) {
-            cout << "- " << locList.data[i].name << endl;
-            found = true;
-        }
-    }
-    if (!found) cout << "暂无地点" << endl;
-}
-
-// ==================== 浏览历史（栈） ====================
-void pushHistory(HistoryStack &stack, const Location &loc) {
-    if (stack.top >= MAX_HISTORY - 1) return;
-    stack.data[++stack.top] = loc;
-}
-
-const Location* popHistory(HistoryStack &stack) {
-    if (stack.top < 0) return nullptr;
-    return &stack.data[stack.top--];
-}
-
-void printHistory(const HistoryStack &stack) {
-    cout << "\n=== 浏览历史 ===" << endl;
-    if (stack.top < 0) { cout << "无记录" << endl; return; }
-    for (int i = stack.top; i >= 0; i--)
-        cout << stack.data[i].name << " → ";
-    cout << "开始" << endl;
-}
-
-// ==================== 最近访问（循环队列） ====================
-void addToRecent(RecentQueue &queue, const Location &loc) {
-    if (queue.count >= MAX_RECENT) {
-        queue.front = (queue.front + 1) % MAX_RECENT;
-        queue.count--;
-    }
-    queue.rear = (queue.rear + 1) % MAX_RECENT;
-    queue.data[queue.rear] = loc;
-    queue.count++;
-}
-
-void printRecent(const RecentQueue &queue) {
-    cout << "\n=== 最近访问 ===" << endl;
-    int idx = queue.front;
-    for (int i = 0; i < queue.count; i++) {
-        cout << queue.data[idx].name << endl;
-        idx = (idx + 1) % MAX_RECENT;
-    }
-}
-
-void visitLocation(HistoryStack &h, RecentQueue &r, LocationList &list, int locId) {
-    Location* loc = const_cast<Location*>(findLocationById(list, locId));
-    if (!loc) { cout << "该地点不存在！" << endl; return; }
-    pushHistory(h, *loc);
-    addToRecent(r, *loc);
-    loc->hot++;
-    cout << "成功访问：" << loc->name << "  当前热度：" << loc->hot << endl;
-}
-
-// ==================== 排序功能 ====================
-bool cmpByHot(const Location &a, const Location &b) {
-    return a.hot > b.hot;
-}
-
-bool cmpByDist(const Location &a, const Location &b) {
-    return a.dist < b.dist;
-}
-
-void sortByHot(LocationList &list) {
-    sort(list.data, list.data + list.length, cmpByHot);
-    cout << "\n已按【热度从高到低】排序！" << endl;
-}
-
-void sortByDistance(LocationList &list) {
-    sort(list.data, list.data + list.length, cmpByDist);
-    cout << "\n已按【距离从近到远】排序！" << endl;
-}
-
-void setDistance(LocationList &list, int locId, int dist) {
-    Location* p = const_cast<Location*>(findLocationById(list, locId));
-    if (p) {
-        p->dist = dist;
-        cout << "成功设置：" << p->name << " 距离 = " << dist << endl;
-    } else {
-        cout << "地点不存在！" << endl;
-    }
-}
-
-// ==================== 系统菜单 ====================
-void showMenu() {
-    cout << "\n========== 校园导航系统 V5 ==========" << endl;
-    cout << "1. 查看全部地点" << endl;
-    cout << "2. 按分类查看地点" << endl;
-    cout << "3. 访问地点（热度+1）" << endl;
-    cout << "4. 查看浏览历史" << endl;
-    cout << "5. 查看最近访问" << endl;
-    cout << "6. 模糊搜索（BF算法）" << endl;
-    cout << "7. 模糊搜索（KMP算法）" << endl;
-    cout << "8. 查询两点最短路径" << endl;
-    cout << "9. 按热度从高到低排序" << endl;
-    cout << "10.按距离从近到远排序" << endl;
-    cout << "11.手动设置地点距离" << endl;
-    cout << "0. 退出系统" << endl;
-    cout << "请输入操作编号：";
-}
-
-// ==================== 主函数 ====================
-int main() {
-    LocationList locList;
-    CategoryList catList;
-    HistoryStack history;
-    RecentQueue recent;
-    CampusGraph graph;
-
-    // 初始化数据结构
-    initLocList(locList);
-    initCatList(catList);
-    initHistoryStack(history);
-    initRecentQueue(recent);
-
-    // 初始化分类
-    addCategory(catList, 1, "教学楼");
-    addCategory(catList, 2, "食堂");
-    addCategory(catList, 3, "宿舍");
-    addCategory(catList, 4, "图书馆");
-    addCategory(catList, 5, "操场");
-
-    // 初始化地点（与图节点ID一一对应）
-    addLocation(locList, 1, "一号教学楼", 1);
-    addLocation(locList, 2, "二号教学楼", 1);
-    addLocation(locList, 3, "第一食堂", 2);
-    addLocation(locList, 4, "第二食堂", 2);
-    addLocation(locList, 5, "男生宿舍", 3);
-    addLocation(locList, 6, "女生宿舍", 3);
-    addLocation(locList, 7, "中心图书馆", 4);
-    addLocation(locList, 8, "主操场", 5);
-    addLocation(locList, 9, "行政楼", 1);
-    addLocation(locList, 10, "校园大门", 1);
-
-    // 构建校园道路网络
-    initGraph(graph, 10);
-    addPath(graph, 1, 2, 50);
-    addPath(graph, 1, 3, 100);
-    addPath(graph, 1, 10, 80);
-    addPath(graph, 2, 4, 70);
-    addPath(graph, 2, 7, 120);
-    addPath(graph, 3, 5, 60);
-    addPath(graph, 4, 6, 60);
-    addPath(graph, 5, 7, 90);
-    addPath(graph, 6, 7, 80);
-    addPath(graph, 7, 8, 150);
-    addPath(graph, 8, 9, 100);
-    addPath(graph, 9, 10, 70);
-
-    int choice;
-    while (true) {
-        showMenu();
-        cin >> choice;
-        if (choice == 0) {
-            cout << "系统已退出，欢迎下次使用！" << endl;
-            break;
-        }
-        switch (choice) {
-            case 1:
-                printAllLocations(locList);
-                break;
-            case 2: {
-                int catId;
-                cout << "输入分类ID（1-5）：";
-                cin >> catId;
-                filterByCategory(locList, catList, catId);
-                break;
-            }
-            case 3: {
-                int id;
-                cout << "输入地点ID：";
-                cin >> id;
-                visitLocation(history, recent, locList, id);
-                break;
-            }
-            case 4:
-                printHistory(history);
-                break;
-            case 5:
-                printRecent(recent);
-                break;
-            case 6: {
-                char key[NAME_LEN];
-                cout << "输入关键词：";
-                cin >> key;
-                searchLocationWithAlgo(locList, key, 0);
-                break;
-            }
-            case 7: {
-                char key[NAME_LEN];
-                cout << "输入关键词：";
-                cin >> key;
-                searchLocationWithAlgo(locList, key, 1);
-                break;
-            }
-            case 8: {
-                int s, e;
-                cout << "输入起点ID："; cin >> s;
-                cout << "输入终点ID："; cin >> e;
-                dijkstra(graph, locList, s, e);
-                break;
-            }
-            case 9:
-                sortByHot(locList);
-                printAllLocations(locList);
-                break;
-            case 10:
-                sortByDistance(locList);
-                printAllLocations(locList);
-                break;
-            case 11: {
-                int id, d;
-                cout << "输入地点ID："; cin >> id;
-                cout << "输入距离值："; cin >> d;
-                setDistance(locList, id, d);
-                break;
-            }
-            default:
-                cout << "输入无效，请重新输入！" << endl;
-        }
-    }
-    return 0;
-}
+void browsePlace(int placeId) {
+    int idx = getPlaceIndex(placeId);
+    if (idx == -1) { printf("地点不存在。\n"); return; }
+    if (currentPlaceId != -1) pushStack(currentPlaceId);
+    currentPlaceId = placeId;
+    places[idx].hot++;
+    enqueueRecent
