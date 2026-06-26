@@ -1,280 +1,284 @@
-#include <iostream>
-#include <cstring>
-using namespace std;
+#include <stdio.h>
+#include <string.h>
 
-const int MAX_LOC = 30;   // 最大地点数
-const int MAX_CAT = 10;   // 最大分类数
-const int NAME_LEN = 20;  // 名称最大长度
-const int MAX_HISTORY = 30; // 最大浏览历史记录数
-const int MAX_RECENT = 5;   // 最近访问地点数
+#define MAX_CATEGORY 20
+#define MAX_PLACE 50
+#define MAX_HISTORY 100
+#define MAX_RECENT 5
 
-// 分类结构体（线性表元素）
-struct Category {
+typedef struct {
     int id;
-    char name[NAME_LEN];
-};
+    char name[50];
+} Category;
 
-// 地点结构体（线性表元素）
-struct Location {
+typedef struct {
     int id;
-    char name[NAME_LEN];
-    int category_id;  // 所属分类ID
-};
+    char name[50];
+    int categoryId;
+} Place;
 
-// 地点线性表（顺序表）
-struct LocationList {
-    Location data[MAX_LOC];
-    int length;
-};
+// 浏览历史栈（后进先出，用于后退）
+typedef struct {
+    int placeIds[MAX_HISTORY];
+    int top;
+} HistoryStack;
 
-// 分类线性表（顺序表）
-struct CategoryList {
-    Category data[MAX_CAT];
-    int length;
-};
+// 最近访问队列（先进先出，容量5）
+typedef struct {
+    int placeIds[MAX_RECENT];
+    int front;
+    int rear;
+    int size;
+} RecentQueue;
 
-// 浏览历史栈（用于后退功能）
-struct HistoryStack {
-    Location data[MAX_HISTORY];
-    int top; // 栈顶指针，-1表示空栈
-};
+Category categories[MAX_CATEGORY];
+int catCount = 0;
+Place places[MAX_PLACE];
+int placeCount = 0;
+HistoryStack historyStack;
+RecentQueue recentQueue;
+int currentPlaceId = -1; // 当前所在地点
 
-// 最近访问队列（固定长度5）
-struct RecentQueue {
-    Location data[MAX_RECENT];
-    int front; // 队头
-    int rear;  // 队尾
-    int count; // 当前元素个数
-};
-
-// 初始化地点线性表
-void initLocList(LocationList &list) {
-    list.length = 0;
+// 栈操作
+void initStack() { historyStack.top = -1; }
+void pushStack(int placeId) {
+    if (historyStack.top < MAX_HISTORY - 1)
+        historyStack.placeIds[++historyStack.top] = placeId;
+}
+int popStack() {
+    if (historyStack.top == -1) return -1;
+    return historyStack.placeIds[historyStack.top--];
 }
 
-// 初始化分类线性表
-void initCatList(CategoryList &list) {
-    list.length = 0;
+// 队列操作
+void initQueue() {
+    recentQueue.front = 0;
+    recentQueue.rear = 0;
+    recentQueue.size = 0;
+}
+void enqueueRecent(int placeId) {
+    // 已存在则移到队尾（最新）
+    int exist = -1;
+    for (int i = 0; i < recentQueue.size; i++) {
+        int idx = (recentQueue.front + i) % MAX_RECENT;
+        if (recentQueue.placeIds[idx] == placeId) { exist = i; break; }
+    }
+    if (exist != -1) {
+        for (int i = exist; i < recentQueue.size - 1; i++) {
+            int idx = (recentQueue.front + i) % MAX_RECENT;
+            int nextIdx = (recentQueue.front + i + 1) % MAX_RECENT;
+            recentQueue.placeIds[idx] = recentQueue.placeIds[nextIdx];
+        }
+        recentQueue.rear = (recentQueue.rear - 1 + MAX_RECENT) % MAX_RECENT;
+        recentQueue.size--;
+    }
+    // 满则出队最早的
+    if (recentQueue.size == MAX_RECENT) {
+        recentQueue.front = (recentQueue.front + 1) % MAX_RECENT;
+        recentQueue.size--;
+    }
+    recentQueue.placeIds[recentQueue.rear] = placeId;
+    recentQueue.rear = (recentQueue.rear + 1) % MAX_RECENT;
+    recentQueue.size++;
 }
 
-// 初始化浏览历史栈
-void initHistoryStack(HistoryStack &stack) {
-    stack.top = -1;
+// 根据ID获取地点名称
+char* getPlaceName(int placeId) {
+    for (int i = 0; i < placeCount; i++)
+        if (places[i].id == placeId) return places[i].name;
+    return "未知地点";
 }
 
-// 初始化最近访问队列
-void initRecentQueue(RecentQueue &queue) {
-    queue.front = 0;
-    queue.rear = -1;
-    queue.count = 0;
+// 浏览地点
+void browsePlace(int placeId) {
+    int exist = 0;
+    for (int i = 0; i < placeCount; i++)
+        if (places[i].id == placeId) { exist = 1; break; }
+    if (!exist) { printf("地点不存在。\n"); return; }
+    
+    if (currentPlaceId != -1) pushStack(currentPlaceId);
+    currentPlaceId = placeId;
+    enqueueRecent(placeId);
+    printf("\n当前位置：%s\n", getPlaceName(placeId));
 }
 
-// 添加地点
-bool addLocation(LocationList &list, int id, const char* name, int catId) {
-    if (list.length >= MAX_LOC) return false;
-    list.data[list.length].id = id;
-    strcpy(list.data[list.length].name, name);
-    list.data[list.length].category_id = catId;
-    list.length++;
-    return true;
+// 历史后退
+void goBack() {
+    int prevId = popStack();
+    if (prevId == -1) { printf("没有可后退的历史记录。\n"); return; }
+    currentPlaceId = prevId;
+    printf("后退成功，当前位置：%s\n", getPlaceName(prevId));
 }
 
-// 添加分类
-bool addCategory(CategoryList &list, int id, const char* name) {
-    if (list.length >= MAX_CAT) return false;
-    list.data[list.length].id = id;
-    strcpy(list.data[list.length].name, name);
-    list.length++;
-    return true;
-}
-
-// 遍历打印所有地点
-void printAllLocations(const LocationList &list) {
-    cout << "=== 全部校园地点（共" << list.length << "个）===" << endl;
-    for (int i = 0; i < list.length; i++) {
-        cout << list.data[i].id << ". " << list.data[i].name << endl;
+// 显示最近访问
+void showRecentPlaces() {
+    printf("\n=== 最近访问的地点（共%d个）===\n", recentQueue.size);
+    if (recentQueue.size == 0) { printf("暂无记录。\n"); return; }
+    for (int i = recentQueue.size - 1; i >= 0; i--) {
+        int idx = (recentQueue.front + i) % MAX_RECENT;
+        printf("%d. %s\n", recentQueue.size - i, getPlaceName(recentQueue.placeIds[idx]));
     }
 }
 
-// 根据分类ID获取分类名称
-const char* getCategoryName(const CategoryList &catList, int catId) {
-    for (int i = 0; i < catList.length; i++) {
-        if (catList.data[i].id == catId) {
-            return catList.data[i].name;
+// 从最近访问跳转
+void jumpFromRecent() {
+    showRecentPlaces();
+    if (recentQueue.size == 0) return;
+    int num;
+    printf("请输入序号跳转（输入0取消）: ");
+    scanf("%d", &num);
+    if (num == 0) return;
+    if (num < 1 || num > recentQueue.size) { printf("无效序号。\n"); return; }
+    int idx = (recentQueue.front + (recentQueue.size - num)) % MAX_RECENT;
+    browsePlace(recentQueue.placeIds[idx]);
+}
+
+// ========== 以下复用版本1基础功能 ==========
+void initData() {
+    categories[catCount++] = (Category){1, "教学区"};
+    categories[catCount++] = (Category){2, "生活区"};
+    categories[catCount++] = (Category){3, "运动区"};
+    places[placeCount++] = (Place){1, "第一教学楼", 1};
+    places[placeCount++] = (Place){2, "图书馆", 1};
+    places[placeCount++] = (Place){3, "实验楼", 1};
+    places[placeCount++] = (Place){4, "学生食堂", 2};
+    places[placeCount++] = (Place){5, "学生宿舍", 2};
+    places[placeCount++] = (Place){6, "超市", 2};
+    places[placeCount++] = (Place){7, "体育馆", 3};
+    places[placeCount++] = (Place){8, "田径场", 3};
+}
+
+void browsePlaceMenu() {
+    showAllPlaces();
+    int id;
+    printf("\n请输入地点ID进行浏览（输入0取消）: ");
+    scanf("%d", &id);
+    if (id == 0) return;
+    browsePlace(id);
+}
+
+void showAllCategories() {
+    printf("\n=== 所有分类 ===\n");
+    for (int i = 0; i < catCount; i++)
+        printf("ID: %d  名称: %s\n", categories[i].id, categories[i].name);
+}
+
+void showAllPlaces() {
+    printf("\n=== 所有地点 ===\n");
+    for (int i = 0; i < placeCount; i++) {
+        char catName[50] = "未知分类";
+        for (int j = 0; j < catCount; j++)
+            if (categories[j].id == places[i].categoryId) {
+                strcpy(catName, categories[j].name);
+                break;
+            }
+        printf("ID: %d  名称: %-15s  分类: %s\n", places[i].id, places[i].name, catName);
+    }
+}
+
+void addCategory() {
+    char name[50];
+    printf("\n请输入新分类名称: ");
+    scanf("%s", name);
+    int newId = catCount > 0 ? categories[catCount-1].id + 1 : 1;
+    categories[catCount++] = (Category){newId, ""};
+    strcpy(categories[catCount-1].name, name);
+    printf("添加成功，分类ID: %d\n", newId);
+}
+
+void deleteCategory() {
+    int id;
+    showAllCategories();
+    printf("\n请输入要删除的分类ID: ");
+    scanf("%d", &id);
+    for (int i = 0; i < placeCount; i++)
+        if (places[i].categoryId == id) { printf("删除失败：该分类下还有地点。\n"); return; }
+    int index = -1;
+    for (int i = 0; i < catCount; i++)
+        if (categories[i].id == id) { index = i; break; }
+    if (index == -1) { printf("分类不存在。\n"); return; }
+    for (int i = index; i < catCount-1; i++) categories[i] = categories[i+1];
+    catCount--;
+    printf("删除成功。\n");
+}
+
+void modifyCategory() {
+    int id;
+    showAllCategories();
+    printf("\n请输入要修改的分类ID: ");
+    scanf("%d", &id);
+    int index = -1;
+    for (int i = 0; i < catCount; i++)
+        if (categories[i].id == id) { index = i; break; }
+    if (index == -1) { printf("分类不存在。\n"); return; }
+    char newName[50];
+    printf("请输入新名称: ");
+    scanf("%s", newName);
+    strcpy(categories[index].name, newName);
+    printf("修改成功。\n");
+}
+
+void filterByCategory() {
+    showAllCategories();
+    int catId;
+    printf("\n请输入分类ID筛选地点: ");
+    scanf("%d", &catId);
+    int catExist = 0;
+    char catName[50];
+    for (int i = 0; i < catCount; i++)
+        if (categories[i].id == catId) { catExist = 1; strcpy(catName, categories[i].name); break; }
+    if (!catExist) { printf("分类不存在。\n"); return; }
+    printf("\n=== %s 下的地点 ===\n", catName);
+    for (int i = 0; i < placeCount; i++)
+        if (places[i].categoryId == catId)
+            printf("ID: %d  名称: %s\n", places[i].id, places[i].name);
+}
+
+void categoryMenu() {
+    int choice;
+    while (1) {
+        printf("\n--- 分类管理 ---\n");
+        printf("1. 查看所有分类\n2. 添加分类\n3. 删除分类\n");
+        printf("4. 修改分类名称\n5. 按分类筛选地点\n0. 返回主菜单\n");
+        printf("请选择: ");
+        scanf("%d", &choice);
+        switch (choice) {
+            case 1: showAllCategories(); break;
+            case 2: addCategory(); break;
+            case 3: deleteCategory(); break;
+            case 4: modifyCategory(); break;
+            case 5: filterByCategory(); break;
+            case 0: return;
+            default: printf("无效选择。\n");
         }
     }
-    return "未知分类";
 }
 
-// 按分类筛选地点
-void filterByCategory(const LocationList &locList, const CategoryList &catList, int catId) {
-    cout << "\n=== 分类【" << getCategoryName(catList, catId) << "】下的地点 ===" << endl;
-    bool found = false;
-    for (int i = 0; i < locList.length; i++) {
-        if (locList.data[i].category_id == catId) {
-            cout << "- " << locList.data[i].name << endl;
-            found = true;
+void mainMenu() {
+    int choice;
+    while (1) {
+        printf("\n===== 校园导航系统 版本2 =====\n");
+        if (currentPlaceId != -1) printf("当前位置: %s\n", getPlaceName(currentPlaceId));
+        printf("1. 查看所有地点并浏览\n2. 分类管理\n3. 浏览历史后退\n");
+        printf("4. 查看最近访问\n5. 从最近访问跳转\n0. 退出系统\n");
+        printf("请选择功能: ");
+        scanf("%d", &choice);
+        switch (choice) {
+            case 1: browsePlaceMenu(); break;
+            case 2: categoryMenu(); break;
+            case 3: goBack(); break;
+            case 4: showRecentPlaces(); break;
+            case 5: jumpFromRecent(); break;
+            case 0: printf("退出系统。\n"); return;
+            default: printf("无效输入，请重新选择。\n");
         }
     }
-    if (!found) {
-        cout << "该分类下暂无地点。" << endl;
-    }
-}
-
-// 根据地点ID查找地点
-const Location* findLocationById(const LocationList &list, int id) {
-    for (int i = 0; i < list.length; i++) {
-        if (list.data[i].id == id) {
-            return &list.data[i];
-        }
-    }
-    return nullptr;
-}
-
-// ==================== 版本2新增：浏览历史功能 ====================
-
-// 压入浏览历史栈
-void pushHistory(HistoryStack &stack, const Location &loc) {
-    if (stack.top >= MAX_HISTORY - 1) {
-        cout << "⚠️ 浏览历史已满，无法记录新访问！" << endl;
-        return;
-    }
-    stack.top++;
-    stack.data[stack.top] = loc;
-}
-
-// 弹出浏览历史栈（后退功能）
-const Location* popHistory(HistoryStack &stack) {
-    if (stack.top == -1) {
-        cout << "⚠️ 浏览历史为空，无法后退！" << endl;
-        return nullptr;
-    }
-    const Location* loc = &stack.data[stack.top];
-    stack.top--;
-    return loc;
-}
-
-// 打印当前浏览历史栈（从新到旧）
-void printHistory(const HistoryStack &stack) {
-    cout << "\n=== 浏览历史记录（从新到旧）===" << endl;
-    if (stack.top == -1) {
-        cout << "暂无浏览记录。" << endl;
-        return;
-    }
-    for (int i = stack.top; i >= 0; i--) {
-        cout << stack.data[i].name << " → ";
-    }
-    cout << "开始" << endl;
-}
-
-// ==================== 版本2新增：最近访问功能 ====================
-
-// 添加到最近访问队列（自动淘汰最早记录）
-void addToRecent(RecentQueue &queue, const Location &loc) {
-    // 如果队列已满，先移除最早的元素（队头）
-    if (queue.count >= MAX_RECENT) {
-        queue.front = (queue.front + 1) % MAX_RECENT;
-        queue.count--;
-    }
-    queue.rear = (queue.rear + 1) % MAX_RECENT;
-    queue.data[queue.rear] = loc;
-    queue.count++;
-}
-
-// 打印最近访问列表
-void printRecent(const RecentQueue &queue) {
-    cout << "\n=== 最近访问的地点（最多" << MAX_RECENT << "个）===" << endl;
-    if (queue.count == 0) {
-        cout << "暂无最近访问记录。" << endl;
-        return;
-    }
-    int idx = queue.front;
-    for (int i = 0; i < queue.count; i++) {
-        cout << i+1 << ". " << queue.data[idx].name << endl;
-        idx = (idx + 1) % MAX_RECENT;
-    }
-}
-
-// 模拟访问一个地点（同时更新历史和最近访问）
-void visitLocation(HistoryStack &history, RecentQueue &recent, const LocationList &list, int locId) {
-    const Location* loc = findLocationById(list, locId);
-    if (!loc) {
-        cout << "⚠️ 未找到ID为" << locId << "的地点！" << endl;
-        return;
-    }
-    pushHistory(history, *loc);
-    addToRecent(recent, *loc);
-    cout << "✅ 已访问地点：" << loc->name << endl;
 }
 
 int main() {
-    LocationList locList;
-    CategoryList catList;
-    HistoryStack history;
-    RecentQueue recent;
-    
-    initLocList(locList);
-    initCatList(catList);
-    initHistoryStack(history);
-    initRecentQueue(recent);
-
-    // 添加预设分类
-    addCategory(catList, 1, "教学区");
-    addCategory(catList, 2, "生活区");
-    addCategory(catList, 3, "运动区");
-    addCategory(catList, 4, "校门区");
-
-    // 添加全部21个地点
-    // 教学区
-    addLocation(locList, 1, "弘义楼西", 1);
-    addLocation(locList, 2, "弘义楼", 1);
-    addLocation(locList, 3, "弘义楼东", 1);
-    addLocation(locList, 4, "明德楼", 1);
-    addLocation(locList, 5, "明德楼西", 1);
-    addLocation(locList, 6, "明德楼东", 1);
-    addLocation(locList, 7, "图书馆", 1);
-    addLocation(locList, 8, "致远楼", 1);
-    // 生活区
-    addLocation(locList, 9, "今日餐厅", 2);
-    addLocation(locList, 10, "1A楼", 2);
-    addLocation(locList, 11, "1B楼", 2);
-    addLocation(locList, 12, "2A楼", 2);
-    addLocation(locList, 13, "2B楼", 2);
-    addLocation(locList, 14, "3A楼", 2);
-    addLocation(locList, 15, "3B楼", 2);
-    // 运动区
-    addLocation(locList, 16, "体育场", 3);
-    addLocation(locList, 17, "球场", 3);
-    // 校门区
-    addLocation(locList, 18, "综合楼", 4);
-    addLocation(locList, 19, "北门", 4);
-    addLocation(locList, 20, "北二门", 4);
-
-    // 测试版本1功能
-    printAllLocations(locList);
-    filterByCategory(locList, catList, 1);  // 查看教学区
-    filterByCategory(locList, catList, 2);  // 查看生活区
-
-    // 测试版本2：模拟访问地点
-    cout << "\n--- 开始模拟访问地点 ---" << endl;
-    visitLocation(history, recent, locList, 7);   // 图书馆
-    visitLocation(history, recent, locList, 4);   // 明德楼
-    visitLocation(history, recent, locList, 2);   // 弘义楼
-    visitLocation(history, recent, locList, 9);   // 今日餐厅
-    visitLocation(history, recent, locList, 16);  // 体育场
-    visitLocation(history, recent, locList, 19);  // 北门（触发最近访问淘汰）
-
-    // 打印浏览历史和最近访问
-    printHistory(history);
-    printRecent(recent);
-
-    // 测试后退功能
-    cout << "\n--- 测试后退功能 ---" << endl;
-    const Location* backLoc = popHistory(history);
-    if (backLoc) cout << "🔙 后退到：" << backLoc->name << endl;
-    backLoc = popHistory(history);
-    if (backLoc) cout << "🔙 后退到：" << backLoc->name << endl;
-    printHistory(history);
-
+    initData();
+    initStack();
+    initQueue();
+    mainMenu();
     return 0;
 }
