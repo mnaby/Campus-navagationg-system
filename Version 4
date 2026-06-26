@@ -1,492 +1,437 @@
-#include <iostream>
-#include <cstring>
-#include <algorithm>
-#include <ctime>
-using namespace std;
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+#include <stdlib.h>
 
-const int MAX_LOC = 30;
-const int MAX_CAT = 10;
-const int NAME_LEN = 20;
-const int MAX_HISTORY = 30;
-const int MAX_RECENT = 5;
-const int INF = 0x3f3f3f3f;
+#define MAX_CATEGORY 20
+#define MAX_PLACE 50
+#define MAX_HISTORY 100
+#define MAX_RECENT 5
 
-// 分类
-struct Category {
+typedef struct {
     int id;
-    char name[NAME_LEN];
-};
+    char name[50];
+} Category;
 
-// 地点（V4新增：热度 hot、距离 dist）
-struct Location {
+// 地点新增距离、热度属性
+typedef struct {
     int id;
-    char name[NAME_LEN];
-    int category_id;
-    int hot;         // 访问热度
-    int dist;        // 距离参考点距离
-};
+    char name[50];
+    int categoryId;
+    double distance;   // 距离校门（米）
+    int hot;           // 访问热度
+} Place;
 
-// 地点顺序表
-struct LocationList {
-    Location data[MAX_LOC];
-    int length;
-};
-
-// 分类顺序表
-struct CategoryList {
-    Category data[MAX_CAT];
-    int length;
-};
-
-// 浏览历史栈
-struct HistoryStack {
-    Location data[MAX_HISTORY];
+typedef struct {
+    int placeIds[MAX_HISTORY];
     int top;
-};
+} HistoryStack;
 
-// 最近访问队列
-struct RecentQueue {
-    Location data[MAX_RECENT];
+typedef struct {
+    int placeIds[MAX_RECENT];
     int front;
     int rear;
-    int count;
-};
+    int size;
+} RecentQueue;
 
-// ==================== 校园图（邻接矩阵） ====================
-struct CampusGraph {
-    int edge[MAX_LOC][MAX_LOC];
-    int nodeNum;
-};
+Category categories[MAX_CATEGORY];
+int catCount = 0;
+Place places[MAX_PLACE];
+int placeCount = 0;
+HistoryStack historyStack;
+RecentQueue recentQueue;
+int currentPlaceId = -1;
 
-// 初始化图
-void initGraph(CampusGraph &g, int n) {
-    g.nodeNum = n;
-    for (int i = 1; i <= n; i++) {
-        for (int j = 1; j <= n; j++) {
-            g.edge[i][j] = (i == j) ? 0 : INF;
+void initStack() { historyStack.top = -1; }
+void pushStack(int placeId) {
+    if (historyStack.top < MAX_HISTORY - 1)
+        historyStack.placeIds[++historyStack.top] = placeId;
+}
+int popStack() {
+    if (historyStack.top == -1) return -1;
+    return historyStack.placeIds[historyStack.top--];
+}
+
+void initQueue() {
+    recentQueue.front = 0;
+    recentQueue.rear = 0;
+    recentQueue.size = 0;
+}
+void enqueueRecent(int placeId) {
+    int exist = -1;
+    for (int i = 0; i < recentQueue.size; i++) {
+        int idx = (recentQueue.front + i) % MAX_RECENT;
+        if (recentQueue.placeIds[idx] == placeId) { exist = i; break; }
+    }
+    if (exist != -1) {
+        for (int i = exist; i < recentQueue.size - 1; i++) {
+            int idx = (recentQueue.front + i) % MAX_RECENT;
+            int nextIdx = (recentQueue.front + i + 1) % MAX_RECENT;
+            recentQueue.placeIds[idx] = recentQueue.placeIds[nextIdx];
         }
+        recentQueue.rear = (recentQueue.rear - 1 + MAX_RECENT) % MAX_RECENT;
+        recentQueue.size--;
+    }
+    if (recentQueue.size == MAX_RECENT) {
+        recentQueue.front = (recentQueue.front + 1) % MAX_RECENT;
+        recentQueue.size--;
+    }
+    recentQueue.placeIds[recentQueue.rear] = placeId;
+    recentQueue.rear = (recentQueue.rear + 1) % MAX_RECENT;
+    recentQueue.size++;
+}
+
+char* getPlaceName(int placeId) {
+    for (int i = 0; i < placeCount; i++)
+        if (places[i].id == placeId) return places[i].name;
+    return "未知地点";
+}
+
+// 浏览地点热度+1
+void browsePlace(int placeId) {
+    int idx = -1;
+    for (int i = 0; i < placeCount; i++)
+        if (places[i].id == placeId) { idx = i; break; }
+    if (idx == -1) { printf("地点不存在。\n"); return; }
+    
+    if (currentPlaceId != -1) pushStack(currentPlaceId);
+    currentPlaceId = placeId;
+    places[idx].hot++;
+    enqueueRecent(placeId);
+    printf("\n当前位置：%s  距离: %.0f米  热度: %d\n", 
+           places[idx].name, places[idx].distance, places[idx].hot);
+}
+
+void goBack() {
+    int prevId = popStack();
+    if (prevId == -1) { printf("没有可后退的历史记录。\n"); return; }
+    currentPlaceId = prevId;
+    printf("后退成功，当前位置：%s\n", getPlaceName(prevId));
+}
+
+void showRecentPlaces() {
+    printf("\n=== 最近访问的地点（共%d个）===\n", recentQueue.size);
+    if (recentQueue.size == 0) { printf("暂无记录。\n"); return; }
+    for (int i = recentQueue.size - 1; i >= 0; i--) {
+        int idx = (recentQueue.front + i) % MAX_RECENT;
+        printf("%d. %s\n", recentQueue.size - i, getPlaceName(recentQueue.placeIds[idx]));
     }
 }
 
-// 添加双向路径
-void addPath(CampusGraph &g, int a, int b, int len) {
-    g.edge[a][b] = len;
-    g.edge[b][a] = len;
+void jumpFromRecent() {
+    showRecentPlaces();
+    if (recentQueue.size == 0) return;
+    int num;
+    printf("请输入序号跳转（输入0取消）: ");
+    scanf("%d", &num);
+    if (num == 0) return;
+    if (num < 1 || num > recentQueue.size) { printf("无效序号。\n"); return; }
+    int idx = (recentQueue.front + (recentQueue.size - num)) % MAX_RECENT;
+    browsePlace(recentQueue.placeIds[idx]);
 }
 
-// Dijkstra 最短路径
-void dijkstra(const CampusGraph &g, const LocationList &list, int startId, int endId) {
-    int dist[MAX_LOC], vis[MAX_LOC] = {0};
-    int pre[MAX_LOC];
-    for (int i = 1; i <= g.nodeNum; i++) {
-        dist[i] = g.edge[startId][i];
-        pre[i] = -1;
+// 字符串匹配
+int naiveMatch(char *text, char *pattern, int *pos) {
+    int n = strlen(text), m = strlen(pattern);
+    int count = 0;
+    for (int i = 0; i <= n - m; i++) {
+        int j;
+        for (j = 0; j < m; j++)
+            if (text[i+j] != pattern[j]) break;
+        if (j == m) pos[count++] = i + 1;
     }
-    dist[startId] = 0;
-    vis[startId] = 1;
-
-    for (int i = 2; i <= g.nodeNum; i++) {
-        int min = INF, u = -1;
-        for (int j = 1; j <= g.nodeNum; j++) {
-            if (!vis[j] && dist[j] < min) {
-                min = dist[j];
-                u = j;
-            }
-        }
-        if (u == -1) break;
-        vis[u] = 1;
-
-        for (int v = 1; v <= g.nodeNum; v++) {
-            if (!vis[v] && g.edge[u][v] != INF && dist[v] > dist[u] + g.edge[u][v]) {
-                dist[v] = dist[u] + g.edge[u][v];
-                pre[v] = u;
-            }
-        }
-    }
-
-    const Location *s = findLocationById(list, startId);
-    const Location *e = findLocationById(list, endId);
-    cout << "\n===== 最短路径 =====" << endl;
-    cout << "起点：" << s->name << endl;
-    cout << "终点：" << e->name << endl;
-    if (dist[endId] == INF) {
-        cout << "两点之间不可达" << endl;
-        return;
-    }
-    cout << "总距离：" << dist[endId] << endl;
-
-    int path[MAX_LOC], cnt = 0;
-    for (int cur = endId; cur != -1; cur = pre[cur])
-        path[cnt++] = cur;
-
-    cout << "路线：";
-    for (int i = cnt - 1; i >= 0; i--) {
-        const Location *loc = findLocationById(list, path[i]);
-        cout << loc->name;
-        if (i > 0) cout << " → ";
-    }
-    cout << endl;
+    return count;
 }
 
-// ==================== BF & KMP 搜索 ====================
-int BF(const char* text, const char* pattern) {
-    int n = strlen(text);
-    int m = strlen(pattern);
-    int i = 0, j = 0;
-    while (i < n && j < m) {
-        if (text[i] == pattern[j]) {
-            i++;
-            j++;
-        } else {
-            i = i - j + 1;
-            j = 0;
-        }
-    }
-    return (j == m) ? i - j : -1;
-}
-
-void buildNext(const char* pattern, int* next) {
+void getNext(char *pattern, int *next) {
     int m = strlen(pattern);
     next[0] = -1;
-    int j = 0, t = -1;
-    while (j < m - 1) {
-        if (t == -1 || pattern[j] == pattern[t]) {
-            j++;
-            t++;
-            next[j] = t;
-        } else {
-            t = next[t];
-        }
+    int i = 0, j = -1;
+    while (i < m) {
+        if (j == -1 || pattern[i] == pattern[j]) {
+            i++; j++;
+            next[i] = j;
+        } else j = next[j];
     }
 }
 
-int KMP(const char* text, const char* pattern) {
-    int n = strlen(text);
-    int m = strlen(pattern);
-    if (m == 0) return 0;
-    int* next = new int[m];
-    buildNext(pattern, next);
-    int i = 0, j = 0;
-    while (i < n && j < m) {
+int kmpMatch(char *text, char *pattern, int *pos) {
+    int n = strlen(text), m = strlen(pattern);
+    int next[m+1];
+    getNext(pattern, next);
+    int count = 0, i = 0, j = 0;
+    while (i < n) {
         if (j == -1 || text[i] == pattern[j]) {
-            i++;
-            j++;
-        } else {
+            i++; j++;
+        } else j = next[j];
+        if (j == m) {
+            pos[count++] = i - j + 1;
             j = next[j];
         }
     }
-    delete[] next;
-    return (j == m) ? i - j : -1;
+    return count;
 }
 
-void searchLocationWithAlgo(const LocationList &list, const char* keyword, int algoType) {
-    cout << "\n=== 搜索：" << keyword << "（" << (algoType == 0 ? "BF算法" : "KMP算法") << "）===" << endl;
-    bool found = false;
-    clock_t start = clock();
-    for (int i = 0; i < list.length; i++) {
-        int pos = (algoType == 0) ? BF(list.data[i].name, keyword) : KMP(list.data[i].name, keyword);
-        if (pos != -1) {
-            cout << "- " << list.data[i].name << endl;
-            found = true;
+void searchPlaces() {
+    char keyword[50];
+    printf("\n请输入搜索关键词: ");
+    scanf("%s", keyword);
+    int pos[50];
+    int naiveTotal = 0, kmpTotal = 0;
+    
+    printf("\n--- 朴素匹配结果 ---\n");
+    clock_t start1 = clock();
+    for (int i = 0; i < placeCount; i++) {
+        int cnt = naiveMatch(places[i].name, keyword, pos);
+        if (cnt > 0) {
+            printf("地点: %-15s 匹配位置: ", places[i].name);
+            for (int k = 0; k < cnt; k++) printf("%d ", pos[k]);
+            printf("\n");
+            naiveTotal += cnt;
         }
     }
-    clock_t end = clock();
-    double timeCost = (double)(end - start) / CLOCKS_PER_SEC * 1000;
-    cout << "搜索耗时：" << timeCost << " ms" << endl;
-    if (!found) cout << "无结果" << endl;
-}
-
-// ==================== 基础初始化 ====================
-void initLocList(LocationList &list) {
-    list.length = 0;
-}
-void initCatList(CategoryList &list) {
-    list.length = 0;
-}
-void initHistoryStack(HistoryStack &stack) {
-    stack.top = -1;
-}
-void initRecentQueue(RecentQueue &queue) {
-    queue.front = 0;
-    queue.rear = -1;
-    queue.count = 0;
-}
-
-// 添加地点（V4：默认热度0、距离0）
-bool addLocation(LocationList &list, int id, const char* name, int catId) {
-    if (list.length >= MAX_LOC) return false;
-    list.data[list.length].id = id;
-    strcpy(list.data[list.length].name, name);
-    list.data[list.length].category_id = catId;
-    list.data[list.length].hot = 0;
-    list.data[list.length].dist = 0;
-    list.length++;
-    return true;
-}
-
-bool addCategory(CategoryList &list, int id, const char* name) {
-    if (list.length >= MAX_CAT) return false;
-    list.data[list.length].id = id;
-    strcpy(list.data[list.length].name, name);
-    list.length++;
-    return true;
-}
-
-const Location* findLocationById(const LocationList &list, int id) {
-    for (int i = 0; i < list.length; i++)
-        if (list.data[i].id == id)
-            return &list.data[i];
-    return nullptr;
-}
-
-const char* getCategoryName(const CategoryList &catList, int catId) {
-    for (int i = 0; i < catList.length; i++)
-        if (catList.data[i].id == catId)
-            return catList.data[i].name;
-    return "未知分类";
-}
-
-// 打印所有地点（显示热度+距离）
-void printAllLocations(const LocationList &list) {
-    cout << "\n=== 全部地点（共" << list.length << "个）===" << endl;
-    for (int i = 0; i < list.length; i++) {
-        cout << list.data[i].id << ". " << list.data[i].name
-             << "  热度:" << list.data[i].hot
-             << "  距离:" << list.data[i].dist << endl;
-    }
-}
-
-void filterByCategory(const LocationList &locList, const CategoryList &catList, int catId) {
-    cout << "\n=== 分类【" << getCategoryName(catList, catId) << "】===" << endl;
-    bool found = false;
-    for (int i = 0; i < locList.length; i++) {
-        if (locList.data[i].category_id == catId) {
-            cout << "- " << locList.data[i].name << endl;
-            found = true;
+    clock_t end1 = clock();
+    if (naiveTotal == 0) printf("未找到匹配地点。\n");
+    printf("总匹配数: %d  耗时: %.2f ms\n", naiveTotal, (double)(end1-start1)/CLOCKS_PER_SEC*1000);
+    
+    printf("\n--- KMP匹配结果 ---\n");
+    clock_t start2 = clock();
+    for (int i = 0; i < placeCount; i++) {
+        int cnt = kmpMatch(places[i].name, keyword, pos);
+        if (cnt > 0) {
+            printf("地点: %-15s 匹配位置: ", places[i].name);
+            for (int k = 0; k < cnt; k++) printf("%d ", pos[k]);
+            printf("\n");
+            kmpTotal += cnt;
         }
     }
-    if (!found) cout << "暂无地点" << endl;
+    clock_t end2 = clock();
+    if (kmpTotal == 0) printf("未找到匹配地点。\n");
+    printf("总匹配数: %d  耗时: %.2f ms\n", kmpTotal, (double)(end2-start2)/CLOCKS_PER_SEC*1000);
 }
 
-// ==================== 浏览历史 ====================
-void pushHistory(HistoryStack &stack, const Location &loc) {
-    if (stack.top >= MAX_HISTORY - 1) return;
-    stack.data[++stack.top] = loc;
+// ========== 新增：排序与热力图 ==========
+// qsort比较函数
+int cmpDistanceAsc(const void *a, const void *b) {
+    Place *p1 = (Place*)a, *p2 = (Place*)b;
+    return (p1->distance > p2->distance) - (p1->distance < p2->distance);
+}
+int cmpDistanceDesc(const void *a, const void *b) {
+    Place *p1 = (Place*)a, *p2 = (Place*)b;
+    return (p2->distance > p1->distance) - (p2->distance < p1->distance);
+}
+int cmpHotAsc(const void *a, const void *b) {
+    return ((Place*)a)->hot - ((Place*)b)->hot;
+}
+int cmpHotDesc(const void *a, const void *b) {
+    return ((Place*)b)->hot - ((Place*)a)->hot;
 }
 
-const Location* popHistory(HistoryStack &stack) {
-    if (stack.top < 0) return nullptr;
-    return &stack.data[stack.top--];
+// 热度等级
+char* getHotLevel(int hot) {
+    if (hot >= 10) return "🔥 高热度";
+    else if (hot >= 3) return "⭐ 中热度";
+    else return "💡 低热度";
 }
 
-void printHistory(const HistoryStack &stack) {
-    cout << "\n=== 浏览历史 ===" << endl;
-    if (stack.top < 0) { cout << "无记录" << endl; return; }
-    for (int i = stack.top; i >= 0; i--)
-        cout << stack.data[i].name << " → ";
-    cout << "开始" << endl;
-}
-
-// ==================== 最近访问 ====================
-void addToRecent(RecentQueue &queue, const Location &loc) {
-    if (queue.count >= MAX_RECENT) {
-        queue.front = (queue.front + 1) % MAX_RECENT;
-        queue.count--;
-    }
-    queue.rear = (queue.rear + 1) % MAX_RECENT;
-    queue.data[queue.rear] = loc;
-    queue.count++;
-}
-
-void printRecent(const RecentQueue &queue) {
-    cout << "\n=== 最近访问 ===" << endl;
-    int idx = queue.front;
-    for (int i = 0; i < queue.count; i++) {
-        cout << queue.data[idx].name << endl;
-        idx = (idx + 1) % MAX_RECENT;
+void showSortedPlaces(Place sorted[], int n) {
+    printf("\n%-3s %-15s %-10s %-8s %s\n", "ID", "名称", "距离(米)", "热度", "热度等级");
+    printf("--------------------------------------------\n");
+    for (int i = 0; i < n; i++) {
+        printf("%-3d %-15s %-10.0f %-8d %s\n", 
+               sorted[i].id, sorted[i].name, sorted[i].distance, 
+               sorted[i].hot, getHotLevel(sorted[i].hot));
     }
 }
 
-// 访问地点（V4：访问一次热度+1）
-void visitLocation(HistoryStack &h, RecentQueue &r, LocationList &list, int locId) {
-    Location* loc = (Location*)findLocationById(list, locId);
-    if (!loc) { cout << "该地点不存在！" << endl; return; }
-    pushHistory(h, *loc);
-    addToRecent(r, *loc);
-    loc->hot++;
-    cout << "成功访问：" << loc->name << "  当前热度：" << loc->hot << endl;
-}
-
-// ==================== V4 新增：热度 & 距离排序 ====================
-// 按热度降序
-bool cmpByHot(const Location &a, const Location &b) {
-    return a.hot > b.hot;
-}
-
-// 按距离升序
-bool cmpByDist(const Location &a, const Location &b) {
-    return a.dist < b.dist;
-}
-
-// 按热度排序
-void sortByHot(LocationList &list) {
-    sort(list.data, list.data + list.length, cmpByHot);
-    cout << "\n已按【热度从高到低】排序！" << endl;
-}
-
-// 按距离排序
-void sortByDistance(LocationList &list) {
-    sort(list.data, list.data + list.length, cmpByDist);
-    cout << "\n已按【距离从近到远】排序！" << endl;
-}
-
-// 手动设置地点距离
-void setDistance(LocationList &list, int locId, int dist) {
-    Location* p = (Location*)findLocationById(list, locId);
-    if (p) {
-        p->dist = dist;
-        cout << "成功设置：" << p->name << " 距离 = " << dist << endl;
-    } else {
-        cout << "地点不存在！" << endl;
-    }
-}
-
-// ==================== 菜单（V4 新增排序功能） ====================
-void showMenu() {
-    cout << "\n========== 校园导航系统 V4 ==========" << endl;
-    cout << "1. 查看全部地点" << endl;
-    cout << "2. 按分类查看地点" << endl;
-    cout << "3. 访问地点（热度+1）" << endl;
-    cout << "4. 查看浏览历史" << endl;
-    cout << "5. 查看最近访问" << endl;
-    cout << "6. 模糊搜索（BF）" << endl;
-    cout << "7. 模糊搜索（KMP）" << endl;
-    cout << "8. 查询最短路径" << endl;
-    cout << "9. 按热度从高到低排序" << endl;
-    cout << "10.按距离从近到远排序" << endl;
-    cout << "11.手动设置地点距离" << endl;
-    cout << "0. 退出系统" << endl;
-    cout << "请输入操作编号：";
-}
-
-// ==================== 主函数 ====================
-int main() {
-    LocationList locList;
-    CategoryList catList;
-    HistoryStack history;
-    RecentQueue recent;
-    CampusGraph graph;
-
-    initLocList(locList);
-    initCatList(catList);
-    initHistoryStack(history);
-    initRecentQueue(recent);
-
-    // 分类
-    addCategory(catList, 1, "教学楼");
-    addCategory(catList, 2, "食堂");
-    addCategory(catList, 3, "宿舍");
-    addCategory(catList, 4, "图书馆");
-    addCategory(catList, 5, "操场");
-
-    // 地点
-    addLocation(locList, 1, "一号教学楼", 1);
-    addLocation(locList, 2, "二号教学楼", 1);
-    addLocation(locList, 3, "第一食堂", 2);
-    addLocation(locList, 4, "第二食堂", 2);
-    addLocation(locList, 5, "男生宿舍", 3);
-    addLocation(locList, 6, "女生宿舍", 3);
-    addLocation(locList, 7, "中心图书馆", 4);
-    addLocation(locList, 8, "主操场", 5);
-    addLocation(locList, 9, "行政楼", 1);
-    addLocation(locList, 10, "校园大门", 1);
-
-    // 初始化地图
-    initGraph(graph, 10);
-    addPath(graph, 1, 2, 50);
-    addPath(graph, 1, 3, 100);
-    addPath(graph, 1, 10, 80);
-    addPath(graph, 2, 4, 70);
-    addPath(graph, 2, 7, 120);
-    addPath(graph, 3, 5, 60);
-    addPath(graph, 4, 6, 60);
-    addPath(graph, 5, 7, 90);
-    addPath(graph, 6, 7, 80);
-    addPath(graph, 7, 8, 150);
-    addPath(graph, 8, 9, 100);
-    addPath(graph, 9, 10, 70);
-
+void sortByDistance() {
+    Place temp[MAX_PLACE];
+    memcpy(temp, places, sizeof(places));
     int choice;
-    while (true) {
-        showMenu();
-        cin >> choice;
-        if (choice == 0) {
-            cout << "系统已退出！" << endl;
-            break;
-        }
+    printf("\n1. 距离从近到远\n2. 距离从远到近\n请选择: ");
+    scanf("%d", &choice);
+    if (choice == 1) qsort(temp, placeCount, sizeof(Place), cmpDistanceAsc);
+    else if (choice == 2) qsort(temp, placeCount, sizeof(Place), cmpDistanceDesc);
+    else { printf("无效选择。\n"); return; }
+    showSortedPlaces(temp, placeCount);
+}
+
+void sortByHot() {
+    Place temp[MAX_PLACE];
+    memcpy(temp, places, sizeof(places));
+    int choice;
+    printf("\n1. 热度从低到高\n2. 热度从高到低\n请选择: ");
+    scanf("%d", &choice);
+    if (choice == 1) qsort(temp, placeCount, sizeof(Place), cmpHotAsc);
+    else if (choice == 2) qsort(temp, placeCount, sizeof(Place), cmpHotDesc);
+    else { printf("无效选择。\n"); return; }
+    showSortedPlaces(temp, placeCount);
+}
+
+void sortMenu() {
+    int choice;
+    while (1) {
+        printf("\n--- 排序与热力展示 ---\n");
+        printf("1. 按距离排序\n2. 按热度排序（热力图）\n0. 返回\n请选择: ");
+        scanf("%d", &choice);
         switch (choice) {
-            case 1:
-                printAllLocations(locList);
-                break;
-            case 2: {
-                int catId;
-                cout << "输入分类ID（1-5）：";
-                cin >> catId;
-                filterByCategory(locList, catList, catId);
-                break;
-            }
-            case 3: {
-                int id;
-                cout << "输入地点ID：";
-                cin >> id;
-                visitLocation(history, recent, locList, id);
-                break;
-            }
-            case 4:
-                printHistory(history);
-                break;
-            case 5:
-                printRecent(recent);
-                break;
-            case 6: {
-                char key[NAME_LEN];
-                cout << "输入关键词：";
-                cin >> key;
-                searchLocationWithAlgo(locList, key, 0);
-                break;
-            }
-            case 7: {
-                char key[NAME_LEN];
-                cout << "输入关键词：";
-                cin >> key;
-                searchLocationWithAlgo(locList, key, 1);
-                break;
-            }
-            case 8: {
-                int s, e;
-                cout << "起点ID："; cin >> s;
-                cout << "终点ID："; cin >> e;
-                dijkstra(graph, locList, s, e);
-                break;
-            }
-            case 9:
-                sortByHot(locList);
-                printAllLocations(locList);
-                break;
-            case 10:
-                sortByDistance(locList);
-                printAllLocations(locList);
-                break;
-            case 11: {
-                int id, d;
-                cout << "输入地点ID："; cin >> id;
-                cout << "输入距离值："; cin >> d;
-                setDistance(locList, id, d);
-                break;
-            }
-            default:
-                cout << "输入无效，请重试！" << endl;
+            case 1: sortByDistance(); break;
+            case 2: sortByHot(); break;
+            case 0: return;
+            default: printf("无效选择。\n");
         }
     }
+}
+
+// ========== 基础功能 ==========
+void initData() {
+    categories[catCount++] = (Category){1, "教学区"};
+    categories[catCount++] = (Category){2, "生活区"};
+    categories[catCount++] = (Category){3, "运动区"};
+    places[placeCount++] = (Place){1, "第一教学楼", 1, 200, 0};
+    places[placeCount++] = (Place){2, "图书馆", 1, 350, 0};
+    places[placeCount++] = (Place){3, "实验楼", 1, 500, 0};
+    places[placeCount++] = (Place){4, "学生食堂", 2, 150, 0};
+    places[placeCount++] = (Place){5, "学生宿舍", 2, 600, 0};
+    places[placeCount++] = (Place){6, "超市", 2, 180, 0};
+    places[placeCount++] = (Place){7, "体育馆", 3, 400, 0};
+    places[placeCount++] = (Place){8, "田径场", 3, 450, 0};
+}
+
+void browsePlaceMenu() {
+    showAllPlaces();
+    int id;
+    printf("\n请输入地点ID进行浏览（输入0取消）: ");
+    scanf("%d", &id);
+    if (id == 0) return;
+    browsePlace(id);
+}
+
+void showAllCategories() {
+    printf("\n=== 所有分类 ===\n");
+    for (int i = 0; i < catCount; i++)
+        printf("ID: %d  名称: %s\n", categories[i].id, categories[i].name);
+}
+
+void showAllPlaces() {
+    printf("\n=== 所有地点 ===\n");
+    for (int i = 0; i < placeCount; i++) {
+        char catName[50] = "未知分类";
+        for (int j = 0; j < catCount; j++)
+            if (categories[j].id == places[i].categoryId) {
+                strcpy(catName, categories[j].name);
+                break;
+            }
+        printf("ID: %d  名称: %-15s  分类: %s  距离: %.0f米  热度: %d\n", 
+               places[i].id, places[i].name, catName, places[i].distance, places[i].hot);
+    }
+}
+
+void addCategory() {
+    char name[50];
+    printf("\n请输入新分类名称: ");
+    scanf("%s", name);
+    int newId = catCount > 0 ? categories[catCount-1].id + 1 : 1;
+    categories[catCount++] = (Category){newId, ""};
+    strcpy(categories[catCount-1].name, name);
+    printf("添加成功，分类ID: %d\n", newId);
+}
+
+void deleteCategory() {
+    int id;
+    showAllCategories();
+    printf("\n请输入要删除的分类ID: ");
+    scanf("%d", &id);
+    for (int i = 0; i < placeCount; i++)
+        if (places[i].categoryId == id) { printf("删除失败：该分类下还有地点。\n"); return; }
+    int index = -1;
+    for (int i = 0; i < catCount; i++)
+        if (categories[i].id == id) { index = i; break; }
+    if (index == -1) { printf("分类不存在。\n"); return; }
+    for (int i = index; i < catCount-1; i++) categories[i] = categories[i+1];
+    catCount--;
+    printf("删除成功。\n");
+}
+
+void modifyCategory() {
+    int id;
+    showAllCategories();
+    printf("\n请输入要修改的分类ID: ");
+    scanf("%d", &id);
+    int index = -1;
+    for (int i = 0; i < catCount; i++)
+        if (categories[i].id == id) { index = i; break; }
+    if (index == -1) { printf("分类不存在。\n"); return; }
+    char newName[50];
+    printf("请输入新名称: ");
+    scanf("%s", newName);
+    strcpy(categories[index].name, newName);
+    printf("修改成功。\n");
+}
+
+void filterByCategory() {
+    showAllCategories();
+    int catId;
+    printf("\n请输入分类ID筛选地点: ");
+    scanf("%d", &catId);
+    int catExist = 0;
+    char catName[50];
+    for (int i = 0; i < catCount; i++)
+        if (categories[i].id == catId) { catExist = 1; strcpy(catName, categories[i].name); break; }
+    if (!catExist) { printf("分类不存在。\n"); return; }
+    printf("\n=== %s 下的地点 ===\n", catName);
+    for (int i = 0; i < placeCount; i++)
+        if (places[i].categoryId == catId)
+            printf("ID: %d  名称: %s  距离: %.0f米  热度: %d\n", 
+                   places[i].id, places[i].name, places[i].distance, places[i].hot);
+}
+
+void categoryMenu() {
+    int choice;
+    while (1) {
+        printf("\n--- 分类管理 ---\n");
+        printf("1. 查看所有分类\n2. 添加分类\n3. 删除分类\n");
+        printf("4. 修改分类名称\n5. 按分类筛选地点\n0. 返回\n请选择: ");
+        scanf("%d", &choice);
+        switch (choice) {
+            case 1: showAllCategories(); break;
+            case 2: addCategory(); break;
+            case 3: deleteCategory(); break;
+            case 4: modifyCategory(); break;
+            case 5: filterByCategory(); break;
+            case 0: return;
+            default: printf("无效选择。\n");
+        }
+    }
+}
+
+void mainMenu() {
+    int choice;
+    while (1) {
+        printf("\n===== 校园导航系统 版本4 =====\n");
+        if (currentPlaceId != -1) printf("当前位置: %s\n", getPlaceName(currentPlaceId));
+        printf("1. 查看所有地点\n2. 分类管理\n3. 历史后退\n");
+        printf("4. 最近访问\n5. 最近访问跳转\n6. 模糊搜索\n7. 排序与热力\n0. 退出\n");
+        printf("请选择: ");
+        scanf("%d", &choice);
+        switch (choice) {
+            case 1: browsePlaceMenu(); break;
+            case 2: categoryMenu(); break;
+            case 3: goBack(); break;
+            case 4: showRecentPlaces(); break;
+            case 5: jumpFromRecent(); break;
+            case 6: searchPlaces(); break;
+            case 7: sortMenu(); break;
+            case 0: printf("退出系统。\n"); return;
+            default: printf("无效输入。\n");
+        }
+    }
+}
+
+int main() {
+    initData();
+    initStack();
+    initQueue();
+    mainMenu();
     return 0;
 }
